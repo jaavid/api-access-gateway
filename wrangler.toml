@@ -1,0 +1,11 @@
+name = "api-access-gateway"
+type = "javascript"
+
+# Define your KV namespace here
+kv_namespaces = [
+    { binding = "APIRoutes", id = "your-namespace-id" }
+]
+
+account_id = "your-account-id"
+zone_id = "your-zone-id"
+route = "https://your-domain.workers.dev/*"
