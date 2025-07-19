@@ -44,6 +44,27 @@ This project is licensed under the [MIT License](LICENSE).
 - Telegram: `https://your-worker-domain.workers.dev/telegram/bot1234:123/sendMessage`
 - Open AI Service: `https://your-worker-domain.workers.dev/ai/v1/chat/completions`
 
+## Setting Up Workers KV
+
+1. **Create a namespace**
+   ```bash
+   wrangler kv:namespace create "APIRoutes"
+   ```
+   Copy the resulting `id` into `wrangler.toml` under `kv_namespaces`.
+
+2. **Add host mappings**
+   ```bash
+   wrangler kv:key put /telegram api.telegram.org --binding=APIRoutes
+   ```
+   Keys represent base paths like `/telegram`, values are the target hosts such as `api.telegram.org`.
+
+## Obtaining Cloudflare IDs
+
+Include these values in `wrangler.toml`:
+
+* **account_id** – visible via `wrangler whoami` after logging in or on the dashboard under **My Profile**.
+* **zone_id** – found on your domain's **Overview** page in the Cloudflare dashboard.
+* **namespace_id** – provided when you create the KV namespace or shown in **Workers > KV**.
 
 ## Contributing
 We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
