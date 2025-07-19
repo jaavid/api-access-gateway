@@ -31,3 +31,7 @@ async function handleRequest(request) {
 
     return fetch(proxiedRequest);
 }
+
+if (typeof module !== 'undefined') {
+  module.exports = { handleRequest };
+}
