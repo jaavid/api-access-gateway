@@ -2,6 +2,8 @@
 
 A tool to ensure seamless access to APIs from sanctioned regions using Cloudflare Workers. This project dynamically routes API calls through a global edge network to bypass regional restrictions.
 
+This project is licensed under the [MIT License](LICENSE).
+
 ## Features
 - Dynamic API routing via Workers KV
 - Scalable and secure
