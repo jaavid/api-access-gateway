@@ -13,11 +13,13 @@ A tool to ensure seamless access to APIs from sanctioned regions using Cloudflar
    ```bash
    git clone https://github.com/jaavid/api-access-gateway.git
    cd api-access-gateway
+   ```
 
 2. Install Cloudflare Wrangler:
 
     ```bash
     npm install -g wrangler
+    ```
 
 3. Configure wrangler.toml:
 
@@ -29,6 +31,7 @@ A tool to ensure seamless access to APIs from sanctioned regions using Cloudflar
 
     ```bash
     wrangler publish
+    ```
 
 ## How It Works
 - Requests are routed through Cloudflare Workers.
