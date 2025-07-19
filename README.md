@@ -41,5 +41,5 @@ A tool to ensure seamless access to APIs from sanctioned regions using Cloudflar
 
 
 ## Contributing
-We welcome contributions! Please read CONTRIBUTING.md for details.
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
