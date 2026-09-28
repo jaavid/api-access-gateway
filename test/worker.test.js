@@ -2,15 +2,32 @@ const assert = require('assert');
 const { Miniflare } = require('miniflare');
 const { MockAgent } = require('undici');
 
+const activeMiniflares = [];
+const activeAgents = [];
+
 function makeMiniflare({ mockAgent, apiKey = '' } = {}) {
-  return new Miniflare({
+  const mf = new Miniflare({
     scriptPath: 'src/worker.js',
     modules: false,
     kvNamespaces: ['APIRoutes'],
     bindings: apiKey ? { GATEWAY_API_KEY: apiKey } : {},
     fetchMock: mockAgent,
   });
+  activeMiniflares.push(mf);
+  if (mockAgent) activeAgents.push(mockAgent);
+  return mf;
 }
+
+afterEach(async () => {
+  while (activeMiniflares.length) {
+    const mf = activeMiniflares.pop();
+    await mf.dispose();
+  }
+  while (activeAgents.length) {
+    const agent = activeAgents.pop();
+    await agent.close();
+  }
+});
 
 describe('API routing', () => {
   it('routes a legacy host-string mapping', async () => {
