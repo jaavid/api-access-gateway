@@ -2,36 +2,164 @@ const assert = require('assert');
 const { Miniflare } = require('miniflare');
 const { MockAgent } = require('undici');
 
+const activeMiniflares = [];
+const activeAgents = [];
+
+function makeMiniflare({ mockAgent, apiKey = '' } = {}) {
+  const mf = new Miniflare({
+    scriptPath: 'src/worker.js',
+    modules: false,
+    kvNamespaces: ['APIRoutes'],
+    bindings: apiKey ? { GATEWAY_API_KEY: apiKey } : {},
+    fetchMock: mockAgent,
+  });
+  activeMiniflares.push(mf);
+  if (mockAgent) activeAgents.push(mockAgent);
+  return mf;
+}
+
+afterEach(async () => {
+  while (activeMiniflares.length) {
+    const mf = activeMiniflares.pop();
+    await mf.dispose();
+  }
+  while (activeAgents.length) {
+    const agent = activeAgents.pop();
+    await agent.close();
+  }
+});
+
 describe('API routing', () => {
-  it('routes request when mapping exists', async () => {
+  it('routes a legacy host-string mapping', async () => {
     const mockAgent = new MockAgent();
     mockAgent.disableNetConnect();
     const pool = mockAgent.get('https://api.example.com');
-    pool.intercept({ path: '/send', method: 'GET' }).reply(200, 'ok');
+    pool.intercept({ path: '/send?x=1', method: 'GET' }).reply(200, 'ok');
 
-    const mf = new Miniflare({
-      scriptPath: 'src/worker.js',
-      modules: false,
-      kvNamespaces: ['APIRoutes'],
-      fetchMock: mockAgent
-    });
+    const mf = makeMiniflare({ mockAgent });
     const ns = await mf.getKVNamespace('APIRoutes');
     await ns.put('/telegram', 'api.example.com');
 
-    const res = await mf.dispatchFetch('https://worker.com/telegram/send');
+    const res = await mf.dispatchFetch('https://worker.com/telegram/send?x=1');
     assert.strictEqual(res.status, 200);
-    const text = await res.text();
-    assert.strictEqual(text, 'ok');
+    assert.strictEqual(await res.text(), 'ok');
   });
 
-  it('returns 404 when mapping missing', async () => {
-    const mf = new Miniflare({
-      scriptPath: 'src/worker.js',
-      modules: false,
-      kvNamespaces: ['APIRoutes']
+  it('routes a JSON mapping', async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    const pool = mockAgent.get('https://api.example.com');
+    pool.intercept({ path: '/v1/test', method: 'POST' }).reply(200, { ok: true });
+
+    const mf = makeMiniflare({ mockAgent });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/meta', JSON.stringify({ upstream: 'https://api.example.com', probe_path: '/health' }));
+
+    const res = await mf.dispatchFetch('https://worker.com/meta/v1/test', {
+      method: 'POST',
+      body: 'hello',
+    });
+    assert.strictEqual(res.status, 200);
+  });
+
+  it('keeps Telegram-compatible bot tokens out of the gateway URL', async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    const pool = mockAgent.get('https://api.telegram.org');
+    pool.intercept({ path: '/bot123456:ABC/sendMessage', method: 'POST' }).reply(200, { ok: true });
+
+    const mf = makeMiniflare({ mockAgent, apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', 'api.telegram.org');
+
+    const res = await mf.dispatchFetch('https://worker.com/telegram/bot/sendMessage', {
+      method: 'POST',
+      headers: {
+        'X-API-Gateway-Key': 'secret-key',
+        'X-Upstream-Bot-Token': '123456:ABC',
+      },
+      body: 'chat_id=@channel&text=hello',
     });
 
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.ok, true);
+  });
+
+  it('rejects malformed bot-token headers', async () => {
+    const mf = makeMiniflare({ apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', 'api.telegram.org');
+
+    const res = await mf.dispatchFetch('https://worker.com/telegram/bot/sendMessage', {
+      method: 'POST',
+      headers: {
+        'X-API-Gateway-Key': 'secret-key',
+        'X-Upstream-Bot-Token': 'bad/token',
+      },
+      body: 'chat_id=@channel&text=hello',
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  it('returns 404 when mapping is missing', async () => {
+    const mf = makeMiniflare();
     const res = await mf.dispatchFetch('https://worker.com/telegram/send');
     assert.strictEqual(res.status, 404);
+  });
+
+  it('requires X-API-Gateway-Key when a secret is configured', async () => {
+    const mf = makeMiniflare({ apiKey: 'secret-key' });
+
+    const denied = await mf.dispatchFetch('https://worker.com/_gateway/health');
+    assert.strictEqual(denied.status, 401);
+
+    const allowed = await mf.dispatchFetch('https://worker.com/_gateway/health', {
+      headers: { 'X-API-Gateway-Key': 'secret-key' },
+    });
+    assert.strictEqual(allowed.status, 200);
+    const body = await allowed.json();
+    assert.strictEqual(body.ok, true);
+    assert.strictEqual(body.auth_required, true);
+    assert.strictEqual(body.version, '2.0');
+  });
+
+  it('probes an allowlisted route and reports latency/status', async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    const pool = mockAgent.get('https://api.example.com');
+    pool.intercept({ path: '/health', method: 'GET' }).reply(404, 'reachable');
+
+    const mf = makeMiniflare({ mockAgent, apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', JSON.stringify({
+      upstream: 'https://api.example.com',
+      probe_path: '/health',
+    }));
+
+    const res = await mf.dispatchFetch('https://worker.com/_gateway/probe/telegram', {
+      headers: { 'X-API-Gateway-Key': 'secret-key' },
+    });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.ok, true);
+    assert.strictEqual(body.reachable, true);
+    assert.strictEqual(body.upstream_status, 404);
+    assert.strictEqual(body.route, 'telegram');
+    assert.ok(Number.isInteger(body.latency_ms));
+  });
+
+  it('lists only configured KV routes', async () => {
+    const mf = makeMiniflare({ apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', 'api.telegram.org');
+    await ns.put('/bale', 'tapi.bale.ai');
+
+    const res = await mf.dispatchFetch('https://worker.com/_gateway/routes', {
+      headers: { 'X-API-Gateway-Key': 'secret-key' },
+    });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.routes.map((route) => route.name), ['bale', 'telegram']);
   });
 });
