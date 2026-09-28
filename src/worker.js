@@ -70,6 +70,22 @@ function upstreamUrl(config, suffixPath, search) {
     return `${base}${path || '/'}${search || ''}`;
 }
 
+function rewriteSensitiveRoute(routeName, suffixPath, headers) {
+    // Telegram-compatible Bot APIs put the bot token in the upstream URL.
+    // Applications can instead call /telegram/bot/<method> and supply the token
+    // in X-Upstream-Bot-Token. The Worker reconstructs the provider URL and
+    // strips the internal header before the request leaves the gateway.
+    if (!['telegram', 'bale'].includes(routeName)) return suffixPath;
+
+    const token = (headers.get('X-Upstream-Bot-Token') || '').trim();
+    if (!token) return suffixPath; // keep legacy /botTOKEN/... forwarding working
+    if (token.length > 2048 || /[\r\n/]/.test(token)) return null;
+
+    const match = suffixPath.match(/^\/bot\/(.+)$/);
+    if (!match) return suffixPath;
+    return `/bot${token}/${match[1]}`;
+}
+
 async function handleGatewayControl(request, url) {
     if (url.pathname === '/_gateway/health') {
         return json({
@@ -151,11 +167,16 @@ async function handleRequest(request) {
         return json({ ok: false, error: 'route_not_found', route: routeName }, 404);
     }
 
-    const suffixPath = `/${parts.join('/')}`;
-    const targetUrl = upstreamUrl(config, suffixPath, url.search);
-
     const headers = new Headers(request.headers);
+    const suffixPath = `/${parts.join('/')}`;
+    const rewrittenPath = rewriteSensitiveRoute(routeName, suffixPath, headers);
+    if (rewrittenPath === null) {
+        return json({ ok: false, error: 'invalid_bot_token' }, 400);
+    }
+    const targetUrl = upstreamUrl(config, rewrittenPath, url.search);
+
     headers.delete('X-API-Gateway-Key');
+    headers.delete('X-Upstream-Bot-Token');
     headers.delete('host');
 
     const init = {
@@ -180,5 +201,5 @@ async function handleRequest(request) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { handleRequest, normalizeRouteConfig, upstreamUrl };
+  module.exports = { handleRequest, normalizeRouteConfig, upstreamUrl, rewriteSensitiveRoute };
 }
