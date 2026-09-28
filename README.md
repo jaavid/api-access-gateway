@@ -13,7 +13,8 @@ The gateway is designed to stay independent from applications such as `social-me
 - Per-route upstream connectivity probes with latency
 - Backward-compatible KV values (`api.telegram.org` still works)
 - Rich JSON route configuration for probe paths
-- Gateway auth header is removed before forwarding upstream
+- Gateway/internal auth headers are removed before forwarding upstream
+- Token-safe Telegram/Bale forwarding so bot tokens do not need to appear in the public gateway URL
 
 ## Request model
 
@@ -23,19 +24,45 @@ A KV entry:
 /telegram -> api.telegram.org
 ```
 
-allows:
+allows a generic path such as:
 
 ```text
-POST https://gateway.example.com/telegram/bot<TOKEN>/sendMessage
+GET https://gateway.example.com/telegram/some/path
 ```
 
 to reach:
 
 ```text
-https://api.telegram.org/bot<TOKEN>/sendMessage
+https://api.telegram.org/some/path
 ```
 
 The application cannot provide an arbitrary target URL. Only routes present in `APIRoutes` can be used.
+
+### Telegram/Bale bot-token-safe forwarding
+
+Telegram-compatible APIs normally require the token in the upstream URL:
+
+```text
+https://api.telegram.org/bot<TOKEN>/sendMessage
+```
+
+To avoid exposing that token in the **gateway** URL, Social Media Manager sends:
+
+```http
+POST /telegram/bot/sendMessage
+X-API-Gateway-Key: <gateway-key>
+X-Upstream-Bot-Token: <bot-token>
+```
+
+The Worker converts that internally to:
+
+```text
+https://api.telegram.org/bot<TOKEN>/sendMessage
+```
+
+and removes both `X-API-Gateway-Key` and `X-Upstream-Bot-Token` before forwarding. The same behavior applies to the `bale` route.
+
+Legacy URLs containing `/bot<TOKEN>/...` remain supported for backwards compatibility, but the header form is recommended.
 
 ## Route configuration
 
@@ -168,7 +195,8 @@ The application can additionally set per-service routing modes such as `OUTBOUND
 - Keep routes allowlisted in KV.
 - Configure `GATEWAY_API_KEY` in production.
 - Rotate the gateway key if it is exposed.
-- The gateway strips `X-API-Gateway-Key` before forwarding upstream.
+- The gateway strips `X-API-Gateway-Key` and `X-Upstream-Bot-Token` before forwarding upstream.
+- Prefer the token-safe Bot API header contract over putting bot tokens into gateway URLs.
 - Upstream credentials remain the application's responsibility.
 
 ## License
