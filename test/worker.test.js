@@ -45,6 +45,46 @@ describe('API routing', () => {
     assert.strictEqual(res.status, 200);
   });
 
+  it('keeps Telegram-compatible bot tokens out of the gateway URL', async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    const pool = mockAgent.get('https://api.telegram.org');
+    pool.intercept({ path: '/bot123456:ABC/sendMessage', method: 'POST' }).reply(200, { ok: true });
+
+    const mf = makeMiniflare({ mockAgent, apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', 'api.telegram.org');
+
+    const res = await mf.dispatchFetch('https://worker.com/telegram/bot/sendMessage', {
+      method: 'POST',
+      headers: {
+        'X-API-Gateway-Key': 'secret-key',
+        'X-Upstream-Bot-Token': '123456:ABC',
+      },
+      body: 'chat_id=@channel&text=hello',
+    });
+
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.ok, true);
+  });
+
+  it('rejects malformed bot-token headers', async () => {
+    const mf = makeMiniflare({ apiKey: 'secret-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/telegram', 'api.telegram.org');
+
+    const res = await mf.dispatchFetch('https://worker.com/telegram/bot/sendMessage', {
+      method: 'POST',
+      headers: {
+        'X-API-Gateway-Key': 'secret-key',
+        'X-Upstream-Bot-Token': 'bad/token',
+      },
+      body: 'chat_id=@channel&text=hello',
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
   it('returns 404 when mapping is missing', async () => {
     const mf = makeMiniflare();
     const res = await mf.dispatchFetch('https://worker.com/telegram/send');
