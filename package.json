@@ -1,14 +1,14 @@
 {
   "name": "api-access-gateway",
-  "version": "1.0.0",
-  "description": "A tool to ensure seamless access to APIs from sanctioned regions using Cloudflare Workers. This project dynamically routes API calls through a global edge network to bypass regional restrictions.",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "Authenticated Cloudflare Worker egress gateway with allowlisted API routes and health probes.",
+  "main": "src/worker.js",
   "scripts": {
     "test": "mocha"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["cloudflare-workers", "api-gateway", "egress", "proxy"],
+  "author": "Javid Momeni",
+  "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "miniflare": "^3.20240601.0",
