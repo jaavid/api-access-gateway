@@ -102,6 +102,47 @@ describe('API routing', () => {
     assert.strictEqual(res.status, 400);
   });
 
+  it('proxies Gemini model list and OpenAI-compatible completions with separate auth headers', async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    const pool = mockAgent.get('https://generativelanguage.googleapis.com');
+    pool.intercept({
+      path: '/v1beta/models?pageSize=1000',
+      method: 'GET',
+      headers: { 'x-goog-api-key': 'google-test-key' },
+    }).reply(200, { models: [{ name: 'models/gemini-test' }] });
+    pool.intercept({
+      path: '/v1beta/openai/chat/completions',
+      method: 'POST',
+      headers: { authorization: 'Bearer google-test-key' },
+    }).reply(200, { choices: [{ message: { content: 'ok' } }] });
+
+    const mf = makeMiniflare({ mockAgent, apiKey: 'worker-test-key' });
+    const ns = await mf.getKVNamespace('APIRoutes');
+    await ns.put('/gemini', JSON.stringify({
+      upstream: 'https://generativelanguage.googleapis.com',
+      probe_path: '/v1beta/models',
+    }));
+
+    const list = await mf.dispatchFetch('https://worker.test/gemini/v1beta/models?pageSize=1000', {
+      headers: { 'X-API-Gateway-Key': 'worker-test-key', 'x-goog-api-key': 'google-test-key' },
+    });
+    assert.strictEqual(list.status, 200);
+    assert.deepStrictEqual((await list.json()).models.map(x => x.name), ['models/gemini-test']);
+
+    const completion = await mf.dispatchFetch('https://worker.test/gemini/v1beta/openai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'X-API-Gateway-Key': 'worker-test-key',
+        'Authorization': 'Bearer google-test-key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'gemini-test', messages: [{ role: 'user', content: 'Hi' }] }),
+    });
+    assert.strictEqual(completion.status, 200);
+    assert.strictEqual((await completion.json()).choices[0].message.content, 'ok');
+  });
+
   it('returns 404 when mapping is missing', async () => {
     const mf = makeMiniflare();
     const res = await mf.dispatchFetch('https://worker.com/telegram/send');

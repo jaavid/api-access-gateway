@@ -90,8 +90,36 @@ Recommended routes for Social Media Manager:
 /google         -> {"upstream":"https://www.googleapis.com","probe_path":"/"}
 /google-oauth   -> {"upstream":"https://oauth2.googleapis.com","probe_path":"/"}
 /google-upload  -> {"upstream":"https://upload.googleapis.com","probe_path":"/"}
+/gemini         -> {"upstream":"https://generativelanguage.googleapis.com","probe_path":"/v1beta/models"}
 /linkedin       -> {"upstream":"https://api.linkedin.com","probe_path":"/"}
 ```
+
+### Google Gemini (no Worker code changes required)
+
+This route is separate from `/google` (`www.googleapis.com`) because
+Gemini uses `generativelanguage.googleapis.com`. Create the Cloudflare
+KV mapping in the **remote** namespace before enabling Gemini in Django:
+
+```bash
+npx wrangler kv key put --remote --binding=APIRoutes "/gemini" \
+  '{"upstream":"https://generativelanguage.googleapis.com","probe_path":"/v1beta/models"}'
+```
+
+Do not place the Google API key in the gateway URL or in Workers KV.
+Django reads `GEMINI_API_KEY` from its server environment and sends
+Google authentication headers with the request. The Worker removes
+`X-API-Gateway-Key` before forwarding.
+
+With `GATEWAY_API_KEY` set on the Worker, probe using the same existing
+gateway secret:
+
+```bash
+curl -H "X-API-Gateway-Key: $API_GATEWAY_KEY" \
+  "$API_GATEWAY_URL/_gateway/probe/gemini"
+```
+
+HTTP 401/403 at the upstream is compatible with network reachability
+because the probe deliberately does not send a Google API key.
 
 ## Control endpoints
 
